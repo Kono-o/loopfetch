@@ -1,3 +1,4 @@
+use crate::app::SETTINGS;
 use katatui::mlua;
 use katatui::mlua::prelude::{LuaResult, LuaTable};
 use katatui::*;
@@ -110,7 +111,7 @@ impl VecMedia for Vec<Media> {
 }
 
 impl Info {
-   pub fn fetch() -> Self {
+   pub fn fetch(settings: &SETTINGS) -> Self {
       let gen_read = GeneralReadout::new();
       let prod_read = ProductReadout::new();
       let mut sys = System::new_all();
@@ -123,12 +124,13 @@ impl Info {
       let (device, bios) = get_dev_bios(&prod_read);
       let (os_n, os_v, kern) = get_os_kern();
       let (log_m, win_m, win_p, desk_e) = get_managers(&gen_read);
-      let (comp, term, shell, text_e) = get_tools(&gen_read);
+      let (term, shell, text_e) = get_tools(&gen_read);
       let (cpu_n, cpu_c) = get_cpu(&gen_read);
       let (cpu_u, cpu_t, ram) = get_cpu_stats(&gen_read, &sys);
       let (gpu_n, gpu_f, gpu_t, vram) = get_gpu_stats();
       let disks = get_disks(&mut sys_disks);
       let media = get_media(&player);
+      let comp = settings.vars().comp().to_string();
 
       Self {
          gen_read,
@@ -166,13 +168,14 @@ impl Info {
       }
    }
 
-   pub fn refresh(&mut self) {
+   pub fn refresh(&mut self, settings: &SETTINGS) {
       (self.user, self.host, self.uptime) = get_user_host_uptime(&self.gen_read);
-      (self.comp, self.term, self.shell, self.text_e) = get_tools(&self.gen_read);
+      (self.term, self.shell, self.text_e) = get_tools(&self.gen_read);
       (self.cpu_u, self.cpu_t, self.ram) = get_cpu_stats(&self.gen_read, &self.sys);
       (self.gpu_n, self.gpu_f, self.gpu_t, self.vram) = get_gpu_stats();
       self.disks = get_disks(&mut self.sys_disks);
       self.media = get_media(&self.player);
+      self.comp = settings.vars().comp().to_string();
    }
 
    pub fn to_lua(&self, lua: &mlua::Lua) -> LuaResult<LuaTable> {
@@ -299,8 +302,7 @@ fn get_managers(gen_read: &GeneralReadout) -> (String, String, String, Option<St
    (log_m, win_m, win_p, desk_e)
 }
 
-fn get_tools(gen_read: &GeneralReadout) -> (String, String, String, String) {
-   let comp = COMPOSITOR.into();
+fn get_tools(gen_read: &GeneralReadout) -> (String, String, String) {
    let term = gen_read.terminal().unwrap_or(DEFAULT.into()).to_lowercase();
    let term = (&term[0..term.len() - 1]).to_string();
    let shell = gen_read
@@ -308,7 +310,7 @@ fn get_tools(gen_read: &GeneralReadout) -> (String, String, String, String) {
       .unwrap_or(DEFAULT.into())
       .to_lowercase();
    let text_e = get_env("EDITOR", "none").to_lowercase();
-   (comp, term, shell, text_e)
+   (term, shell, text_e)
 }
 
 fn get_env(var: &str, default: &str) -> String {

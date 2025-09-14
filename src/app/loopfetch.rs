@@ -24,12 +24,31 @@ impl Default for ORDER {
    }
 }
 
-struct SETTINGS {
+pub struct VARS {
+   comp: String,
+}
+
+impl Default for VARS {
+   fn default() -> Self {
+      Self {
+         comp: "unknown".to_string(),
+      }
+   }
+}
+
+impl VARS {
+   pub fn comp(&self) -> &str {
+      &self.comp
+   }
+}
+
+pub struct SETTINGS {
    fps: u32,
    tps: u32,
    rps: u32,
    layout: LAYOUT,
    order: ORDER,
+   vars: VARS,
 }
 
 impl Default for SETTINGS {
@@ -40,7 +59,14 @@ impl Default for SETTINGS {
          rps: 5,
          layout: LAYOUT::default(),
          order: ORDER::default(),
+         vars: VARS::default(),
       }
+   }
+}
+
+impl SETTINGS {
+   pub fn vars(&self) -> &VARS {
+      &self.vars
    }
 }
 
@@ -67,12 +93,13 @@ impl App for LoopFetch {
    const DEFAULT_CONFIG_SRC: &'static str = include_str!("../../cfg_template.lua");
 
    fn init(gloop: &mut GLoop, src: String) -> AppOutput<Self> {
+      let settings = SETTINGS::default();
       let mut app = Self {
-         info: Info::fetch(),
+         info: Info::fetch(&settings),
          lines: LINES::new(),
          lua: Lua::new(),
          src: "".to_string(),
-         settings: SETTINGS::default(),
+         settings,
          refreshing: false,
       };
       app.reload(gloop, src);
@@ -91,7 +118,7 @@ impl App for LoopFetch {
 
    fn logic(&mut self, gloop: &mut GLoop, gstate: &mut GState, event: Option<Event>) {
       self.refreshing = if gloop.tick() % self.settings.rps == 0 {
-         self.info.refresh();
+         self.info.refresh(&self.settings);
          self.update();
          gstate.request_reload();
          true
@@ -189,12 +216,20 @@ impl LoopFetch {
                }
                _ => default_order,
             };
+            let default_comp = default_settings.vars.comp.clone();
+            let vars = match table.get::<mlua::Table>("vars") {
+               Ok(table) => VARS {
+                  comp: table.get::<String>("comp").unwrap_or(default_comp),
+               },
+               _ => VARS { comp: default_comp },
+            };
             SETTINGS {
                fps: table.get("fps").unwrap_or(default_settings.fps),
                tps: table.get("tps").unwrap_or(default_settings.tps),
                rps: table.get("rps").unwrap_or(default_settings.rps),
                layout,
                order,
+               vars,
             }
          }
          _ => default_settings,

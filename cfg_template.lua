@@ -1,10 +1,11 @@
 --========== LOOPFETCH SETTINGS ==========--
 SETTINGS = {
-    fps = 20, -- frames aka render calls (per second)
-    tps = 10, -- ticks aka logical updates (per second)
+    fps = 60, -- frames aka render calls (per second)
+    tps = 30, -- ticks aka logical updates (per second)
     rps = 5, -- rate of fetch refreshes (per second)
     order = { "info", "ascii" }, -- order of boxes: info, ascii (a, i also works)
     layout = "horizontal", -- stacking of boxes: horizontal, vertical (or h, v)
+    vars = { comp = "idk" }, -- hardcode unfetchables (e.g. comp = 'picom')
 }
 
 --========== LOOPFETCH COLORS ==========-- define ur own colors here
