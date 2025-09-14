@@ -16,7 +16,10 @@ katatui = { path = "../katatui" }
 # use this instead when compiling from github
 # katatui = { git = "https://github.com/Kono-o/katatui.git" }
 # or just crates io link: https://crates.io/crates/katatui
-
+libmacchina = "8.1.0"
+sysinfo = "0.37.0"
+nvml-wrapper = "0.11.0"
+mpris = "2.0.1"
 
 [profile.release]
 strip = true
