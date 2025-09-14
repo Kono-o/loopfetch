@@ -4,5 +4,5 @@ mod fetch;
 use katatui::*;
 
 fn main() {
-   entry::run::<app::LoopFetch>().out();
+   entry::tui::<app::LoopFetch>();
 }

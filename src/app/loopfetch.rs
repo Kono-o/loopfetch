@@ -2,10 +2,34 @@ use crate::fetch::Info;
 use katatui::mlua::Lua;
 use katatui::*;
 
+enum LAYOUT {
+   Horiz,
+   Vert,
+}
+
+impl Default for LAYOUT {
+   fn default() -> Self {
+      LAYOUT::Horiz
+   }
+}
+
+enum ORDER {
+   InfoFirst,
+   AsciFirst,
+}
+
+impl Default for ORDER {
+   fn default() -> Self {
+      ORDER::InfoFirst
+   }
+}
+
 struct SETTINGS {
    fps: u32,
    tps: u32,
    rps: u32,
+   layout: LAYOUT,
+   order: ORDER,
 }
 
 impl Default for SETTINGS {
@@ -14,6 +38,8 @@ impl Default for SETTINGS {
          fps: 60,
          tps: 30,
          rps: 5,
+         layout: LAYOUT::default(),
+         order: ORDER::default(),
       }
    }
 }
@@ -38,6 +64,7 @@ pub struct LoopFetch {
 impl App for LoopFetch {
    const APP_NAME: &'static str = "loopfetch";
    const CONFIG_FILE: &'static str = "cfg.lua";
+   const DEFAULT_CONFIG_SRC: &'static str = include_str!("../../cfg_template.lua");
 
    fn init(gloop: &mut GLoop, src: String) -> AppOutput<Self> {
       let mut app = Self {
@@ -72,21 +99,31 @@ impl App for LoopFetch {
          false
       };
       match event {
-         Some(Event::Key(key_event)) => {
-            if key_event.kind == KeyEventKind::Press {
-               self.handle_key(gloop, gstate, key_event);
-            }
+         Some(Event::Key(k)) => {
+            self.handle_key(gloop, gstate, k);
          }
+         //Some(Event::Mouse(m)) => {
+         //   self.handle_mouse(gloop, gstate, m);
+         //}
          _ => {}
       }
    }
+
    fn render(&self, gloop: &GLoop, gstate: &GState, area: Rect, buf: &mut Buffer) {
+      let dir = match self.settings.layout {
+         LAYOUT::Horiz => Direction::Horizontal,
+         LAYOUT::Vert => Direction::Vertical,
+      };
+      let (a, b) = match self.settings.order {
+         ORDER::InfoFirst => (0, 1),
+         ORDER::AsciFirst => (1, 0),
+      };
       let layout = Layout::default()
-         .direction(Direction::Horizontal)
+         .direction(dir)
          .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
          .split(area);
-      self.render_info_box(gloop, gstate, area, layout[0], buf);
-      self.render_asci_box(gloop, gstate, area, layout[1], buf);
+      self.render_info_box(gloop, gstate, area, layout[a], buf);
+      self.render_asci_box(gloop, gstate, area, layout[b], buf);
    }
 }
 
@@ -118,16 +155,48 @@ impl LoopFetch {
 
    fn parse_lua(&mut self) {
       let default_settings = SETTINGS::default();
+      let default_layout = LAYOUT::default();
+      let default_order = ORDER::default();
       let default_style = Style::new();
       let default_lines = LINES::new();
       let globals = self.lua.globals();
 
       let settings = match globals.get::<mlua::Table>("SETTINGS") {
-         Ok(table) => SETTINGS {
-            fps: table.get("fps").unwrap_or(default_settings.fps),
-            tps: table.get("tps").unwrap_or(default_settings.tps),
-            rps: table.get("rps").unwrap_or(default_settings.rps),
-         },
+         Ok(table) => {
+            let layout = match table.get::<Option<String>>("layout") {
+               Ok(os) => match os {
+                  Some(s) => {
+                     let first = s.chars().nth(0).unwrap_or('h');
+                     match first {
+                        'h' | 'H' => LAYOUT::Horiz,
+                        'v' | 'V' => LAYOUT::Vert,
+                        _ => default_layout,
+                     }
+                  }
+                  _ => default_layout,
+               },
+               _ => default_layout,
+            };
+            let order = match table.get::<mlua::Table>("order") {
+               Ok(table) => {
+                  let f = table.get::<String>(1).unwrap_or("info".into());
+                  match f.chars().nth(0).unwrap_or('i') {
+                     'i' | 'I' => ORDER::InfoFirst,
+                     'a' | 'A' => ORDER::AsciFirst,
+                     _ => default_order,
+                     _ => default_order,
+                  }
+               }
+               _ => default_order,
+            };
+            SETTINGS {
+               fps: table.get("fps").unwrap_or(default_settings.fps),
+               tps: table.get("tps").unwrap_or(default_settings.tps),
+               rps: table.get("rps").unwrap_or(default_settings.rps),
+               layout,
+               order,
+            }
+         }
          _ => default_settings,
       };
 
@@ -243,12 +312,15 @@ impl LoopFetch {
 
    fn handle_key(&mut self, gloop: &mut GLoop, gstate: &mut GState, key_event: KeyEvent) {
       let fps = gloop.target_fps();
-      match key_event.code {
-         KeyCode::Char('q') => gstate.request_exit(),
-         KeyCode::Char('r') => gstate.request_reload(),
-         KeyCode::Left => gloop.set_fps(fps - 5),
-         KeyCode::Right => gloop.set_fps(fps + 5),
-         _ => {}
+      let kind = key_event.kind;
+      if kind == KeyEventKind::Press {
+         match key_event.code {
+            KeyCode::Char('q') => gstate.request_exit(),
+            KeyCode::Char('r') => gstate.request_reload(),
+            KeyCode::Left => gloop.set_fps(fps - 5),
+            KeyCode::Right => gloop.set_fps(fps + 5),
+            _ => {}
+         }
       }
    }
 }
