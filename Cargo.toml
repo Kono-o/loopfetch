@@ -1,0 +1,24 @@
+[package]
+name = "loopfetch"
+version = "0.1.0"
+edition = "2024"
+authors = ["Kono"]
+description = "kono's custom fetch cli."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/Kono-o/loopfetch"
+keywords = ["tui", 'fetch', 'system-info', 'cli']
+categories = ["command-line-utilities"]
+homepage = "https://github.com/Kono-o/loopfetch"
+documentation = "https://docs.rs/loopfetch"
+[dependencies]
+katatui = { path = "../katatui" }
+# use this instead when compiling from github
+# katatui = { git = "https://github.com/Kono-o/katatui.git" }
+# or just crates io link: https://crates.io/crates/katatui
+
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
