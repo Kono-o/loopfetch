@@ -76,14 +76,26 @@ pub struct Word {
    pub style: Style,
 }
 
+#[derive(Debug, Default)]
+pub struct InfoBox {
+   lines: LINES,
+   max_len: usize,
+}
+#[derive(Debug, Default)]
+pub struct AsciBox {
+   lines: LINES,
+   max_len: usize,
+}
+
 type LINES = Vec<Vec<Word>>;
 
 pub struct LoopFetch {
    info: Info,
-   lines: LINES,
    lua: Lua,
    src: String,
    settings: SETTINGS,
+   info_box: InfoBox,
+   asci_box: AsciBox,
    refreshing: bool,
 }
 
@@ -96,10 +108,11 @@ impl App for LoopFetch {
       let settings = SETTINGS::default();
       let mut app = Self {
          info: Info::fetch(&settings),
-         lines: LINES::new(),
          lua: Lua::new(),
          src: "".to_string(),
          settings,
+         info_box: InfoBox::default(),
+         asci_box: AsciBox::default(),
          refreshing: false,
       };
       app.reload(gloop, src);
@@ -145,12 +158,32 @@ impl App for LoopFetch {
          ORDER::InfoFirst => (0, 1),
          ORDER::AsciFirst => (1, 0),
       };
+      let constraint = |area: Rect, w: Constraint, h: Constraint| -> Rect {
+         let rect = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([w])
+            .split(area)[0];
+         let rect = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([h])
+            .split(rect)[0];
+         rect
+      };
       let layout = Layout::default()
          .direction(dir)
          .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
          .split(area);
-      self.render_info_box(gloop, gstate, area, layout[a], buf);
-      self.render_asci_box(gloop, gstate, area, layout[b], buf);
+
+      let info_box = constraint(
+         layout[a],
+         Constraint::Length(self.info_box.max_len as u16),
+         Constraint::Length(self.info_box.lines.len() as u16),
+      );
+
+      let asci_box = constraint(layout[b], Constraint::Length(50), Constraint::Length(50));
+
+      self.render_info_box(gloop, gstate, area, info_box, buf);
+      self.render_asci_box(gloop, gstate, area, asci_box, buf);
    }
 }
 
@@ -290,7 +323,12 @@ impl LoopFetch {
          _ => default_lines,
       };
       self.settings = settings;
-      self.lines = lines;
+      self.info_box.max_len = lines
+         .iter()
+         .map(|words| words.iter().map(|w| w.text.len()).sum::<usize>())
+         .max()
+         .unwrap_or(0);
+      self.info_box.lines = lines;
    }
 
    fn render_info_box(
@@ -302,15 +340,18 @@ impl LoopFetch {
       buf: &mut Buffer,
    ) {
       let mut text = Vec::<Line>::new();
-      for line in &self.lines {
+      for line in &self.info_box.lines {
          let mut spans = Vec::<Span>::new();
          for word in line {
             spans.push(Span::styled(&word.text, word.style));
          }
          text.push(Line::from(spans));
       }
+      let block = Block::new();
+      //.borders(Borders::ALL)
+      //.border_type(BorderType::Rounded);
       Paragraph::new(Text::from(text))
-         .block(Block::new())
+         .block(block)
          .render(layout, buf);
    }
 
@@ -340,20 +381,27 @@ impl LoopFetch {
       ));
       let refreshed = if self.refreshing { "refreshed..." } else { "" };
       let rps_line = Line::from(format!("rps: {:02.2} {refreshed}", self.settings.rps));
-      Paragraph::new(Text::from(vec![fps_line, tps_line, rps_line]))
-         .block(Block::new())
+      let area_line = Line::from(format!(
+         "area: {} x {}  ({})",
+         layout.width, layout.height, self.info_box.max_len,
+      ));
+
+      let block = Block::new();
+      //.borders(Borders::ALL)
+      //.border_type(BorderType::Rounded);
+      Paragraph::new(Text::from(vec![fps_line, tps_line, rps_line, area_line]))
+         .block(block)
          .render(layout, buf);
    }
 
    fn handle_key(&mut self, gloop: &mut GLoop, gstate: &mut GState, key_event: KeyEvent) {
-      let fps = gloop.target_fps();
+      //let fps = gloop.target_fps();
       let kind = key_event.kind;
       if kind == KeyEventKind::Press {
          match key_event.code {
             KeyCode::Char('q') => gstate.request_exit(),
             KeyCode::Char('r') => gstate.request_reload(),
-            KeyCode::Left => gloop.set_fps(fps - 5),
-            KeyCode::Right => gloop.set_fps(fps + 5),
+            KeyCode::Left | KeyCode::Right => {}
             _ => {}
          }
       }

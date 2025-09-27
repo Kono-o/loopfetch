@@ -39,6 +39,8 @@ STYLES = {
     pastel10 = { fg = COLORS.PASTEL_MAGENTA, bold = true, italic = true },
     pastel11 = { fg = COLORS.PASTEL_SILVER },
     pastel12 = { fg = COLORS.PASTEL_ORANGE, bold = true },
+
+    border = { fg = "#FFFFFF", bold = true },
 }
 
 -- span helper --
@@ -47,8 +49,24 @@ function span(text, style_name)
 end
 
 -- line helper --
-function line(...)
+function line(border, ...)
     local spans = { ... }
+
+    if border then
+        -- find total content width
+        local len = 0
+        for _, sp in ipairs(spans) do
+            len = len + #sp.text
+        end
+        -- wrap with │ on left/right
+        local new_spans = { span("│", "border") }
+        for _, sp in ipairs(spans) do
+            table.insert(new_spans, sp)
+        end
+        table.insert(new_spans, span("│", "border"))
+        spans = new_spans
+    end
+
     return spans
 end
 
@@ -95,7 +113,21 @@ if Info.media and #Info.media > 0 then
                 span("Media: ", "pastel3"),
                 span(m.artist .. " - " .. m.song, "pastel4"),
                 span(" [" .. status .. "]", "pastel5"),
-                span(" " .. m.name, "pastel6")
+                span(" on " .. m.name, "pastel6")
         ))
     end
 end
+
+local max_len = 0
+for _, l in ipairs(LINES) do
+    local len = 0
+    for _, sp in ipairs(l) do
+        len = len + #sp.text
+    end
+    if len > max_len then
+        max_len = len
+    end
+end
+
+-- insert top border
+table.insert(LINES, 1, line(false, span("┌" .. string.rep("─", max_len) .. "┐", "border")))
