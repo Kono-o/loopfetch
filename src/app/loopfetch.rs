@@ -2,25 +2,35 @@ use crate::fetch::Info;
 use katatui::mlua::Lua;
 use katatui::*;
 
+#[derive(Default)]
 enum LAYOUT {
+   #[default]
    Horiz,
    Vert,
 }
 
-impl Default for LAYOUT {
-   fn default() -> Self {
-      LAYOUT::Horiz
+impl LAYOUT {
+   fn swap(&mut self) {
+      *self = match self {
+         LAYOUT::Horiz => LAYOUT::Vert,
+         _ => LAYOUT::Horiz,
+      }
    }
 }
 
+#[derive(Default)]
 enum ORDER {
+   #[default]
    InfoFirst,
    AsciFirst,
 }
 
-impl Default for ORDER {
-   fn default() -> Self {
-      ORDER::InfoFirst
+impl ORDER {
+   fn swap(&mut self) {
+      *self = match self {
+         ORDER::InfoFirst => ORDER::AsciFirst,
+         _ => ORDER::InfoFirst,
+      }
    }
 }
 
@@ -97,6 +107,7 @@ pub struct LoopFetch {
    info_box: InfoBox,
    asci_box: AsciBox,
    refreshing: bool,
+   reloading: bool,
 }
 
 impl App for LoopFetch {
@@ -114,6 +125,7 @@ impl App for LoopFetch {
          info_box: InfoBox::default(),
          asci_box: AsciBox::default(),
          refreshing: false,
+         reloading: false,
       };
       app.reload(gloop, src);
       gloop.set_fps(app.settings.fps);
@@ -123,7 +135,7 @@ impl App for LoopFetch {
 
    fn reload(&mut self, gloop: &mut GLoop, cfg_src: String) -> AppOutput<()> {
       self.src = cfg_src;
-      let _ = self.update();
+      self.load_lua();
       gloop.set_fps(self.settings.fps);
       gloop.set_tps(self.settings.tps);
       AppOutput::nil()
@@ -132,12 +144,18 @@ impl App for LoopFetch {
    fn logic(&mut self, gloop: &mut GLoop, gstate: &mut GState, event: Option<Event>) {
       self.refreshing = if gloop.tick() % self.settings.rps == 0 {
          self.info.refresh(&self.settings);
-         self.update();
+         self.update(gloop);
+         true
+      } else {
+         false
+      };
+      self.reloading = if gloop.tick() % (self.settings.rps * 10) == 0 {
          gstate.request_reload();
          true
       } else {
          false
       };
+
       match event {
          Some(Event::Key(k)) => {
             self.handle_key(gloop, gstate, k);
@@ -180,7 +198,11 @@ impl App for LoopFetch {
          Constraint::Length(self.info_box.lines.len() as u16),
       );
 
-      let asci_box = constraint(layout[b], Constraint::Length(50), Constraint::Length(50));
+      let asci_box = constraint(
+         layout[b],
+         Constraint::Length(self.asci_box.max_len as u16 + 50),
+         Constraint::Length(self.asci_box.lines.len() as u16 + 10),
+      );
 
       self.render_info_box(gloop, gstate, area, info_box, buf);
       self.render_asci_box(gloop, gstate, area, asci_box, buf);
@@ -188,28 +210,75 @@ impl App for LoopFetch {
 }
 
 impl LoopFetch {
-   fn update(&mut self) {
-      self.update_lua();
-      self.exec_lua();
+   fn update(&mut self, gloop: &GLoop) {
+      self.update_lua(gloop);
+      self.run_lua();
       self.parse_lua();
    }
-   fn update_lua(&mut self) -> AppOutput<()> {
+   fn update_lua(&mut self, gloop: &GLoop) -> AppOutput<()> {
+      match self.lua.globals().get::<mlua::Table>("SETTINGS") {
+         Ok(table) => {
+            let order = match table.get::<mlua::Table>("order") {
+               Err(e) => return app_err!("failed to get SETTINGS.order in lua {e}"),
+               Ok(t) => t,
+            };
+            match self.settings.order {
+               ORDER::InfoFirst => {
+                  order.set(1, "info");
+                  order.set(2, "ascii");
+               }
+               ORDER::AsciFirst => {
+                  order.set(1, "ascii");
+                  order.set(2, "info");
+               }
+            };
+            match self.settings.layout {
+               LAYOUT::Vert => {
+                  table.set("layout", "vertical");
+               }
+               LAYOUT::Horiz => {
+                  table.set("layout", "horizontal");
+               }
+            }
+         }
+         Err(e) => return app_err!("failed to get SETTINGS in lua {e}"),
+      };
+
       let info_lua = match self.info.to_lua(&self.lua) {
          Ok(i) => i,
          Err(e) => return app_err!("failed to convert Info to lua {e}"),
+      };
+      let loop_lua = match gloop.to_lua(&self.lua) {
+         Ok(i) => i,
+         Err(e) => return app_err!("failed to convert Loop to lua {e}"),
       };
 
       match self.lua.globals().set("Info", info_lua) {
          Ok(_) => {}
          Err(e) => return app_err!("failed to set Info in lua {}", e),
       };
+      match self.lua.globals().set("Loop", loop_lua) {
+         Ok(_) => {}
+         Err(e) => return app_err!("failed to set Loop in lua {}", e),
+      };
+
       AppOutput::nil()
    }
 
-   fn exec_lua(&mut self) -> AppOutput<()> {
+   fn load_lua(&mut self) -> AppOutput<()> {
       match self.lua.load(&self.src).exec() {
-         Err(e) => app_err!("failed to execute lua {}", e),
+         Err(e) => app_err!("failed to load lua {}", e),
          _ => AppOutput::nil(),
+      }
+   }
+
+   fn run_lua(&mut self) -> AppOutput<()> {
+      match self.lua.globals().get::<mlua::Function>("update") {
+         Ok(f) => {
+            f.call::<()>(());
+            AppOutput::nil()
+         }
+         Err(e) => app_err!("failed to run lua {}", e),
       }
    }
 
@@ -268,7 +337,7 @@ impl LoopFetch {
          _ => default_settings,
       };
 
-      let lines: Vec<Vec<Word>> = match globals.get::<mlua::Table>("LINES") {
+      let lines: Vec<Vec<Word>> = match globals.get::<mlua::Table>("INFO_LINES") {
          Ok(lines_table) => {
             let mut result = Vec::new();
 
@@ -347,9 +416,9 @@ impl LoopFetch {
          }
          text.push(Line::from(spans));
       }
-      let block = Block::new();
-      //.borders(Borders::ALL)
-      //.border_type(BorderType::Rounded);
+      let block = Block::new()
+         .borders(Borders::ALL)
+         .border_type(BorderType::Rounded);
       Paragraph::new(Text::from(text))
          .block(block)
          .render(layout, buf);
@@ -380,15 +449,17 @@ impl LoopFetch {
          gloop.tick() % gloop.target_tps(),
       ));
       let refreshed = if self.refreshing { "refreshed..." } else { "" };
+      let reloaded = if self.reloading { "reloaded..." } else { "" };
+
       let rps_line = Line::from(format!("rps: {:02.2} {refreshed}", self.settings.rps));
       let area_line = Line::from(format!(
-         "area: {} x {}  ({})",
+         "area: {} x {}  ({}) {reloaded}",
          layout.width, layout.height, self.info_box.max_len,
       ));
 
-      let block = Block::new();
-      //.borders(Borders::ALL)
-      //.border_type(BorderType::Rounded);
+      let block = Block::new()
+         .borders(Borders::ALL)
+         .border_type(BorderType::Rounded);
       Paragraph::new(Text::from(vec![fps_line, tps_line, rps_line, area_line]))
          .block(block)
          .render(layout, buf);
@@ -401,7 +472,8 @@ impl LoopFetch {
          match key_event.code {
             KeyCode::Char('q') => gstate.request_exit(),
             KeyCode::Char('r') => gstate.request_reload(),
-            KeyCode::Left | KeyCode::Right => {}
+            KeyCode::Up | KeyCode::Down => self.settings.layout.swap(),
+            KeyCode::Left | KeyCode::Right => self.settings.order.swap(),
             _ => {}
          }
       }

@@ -3,8 +3,8 @@ use katatui::mlua;
 use katatui::mlua::prelude::{LuaResult, LuaTable};
 use katatui::*;
 use libmacchina::{
-   traits::{GeneralReadout as _, ProductReadout as _, ShellFormat, ShellKind}, GeneralReadout,
-   ProductReadout,
+   traits::{GeneralReadout as _, ProductReadout as _, ShellFormat, ShellKind},
+   GeneralReadout, ProductReadout,
 };
 use mpris::{Player, PlayerFinder};
 use nvml_wrapper::{
