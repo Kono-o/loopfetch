@@ -1,5 +1,4 @@
-use crate::fetch::Info;
-use katatui::mlua::Lua;
+use crate::fetch::INFO;
 use katatui::*;
 
 #[derive(Default)]
@@ -100,74 +99,45 @@ pub struct AsciBox {
 type LINES = Vec<Vec<Word>>;
 
 pub struct LoopFetch {
-   info: Info,
-   lua: Lua,
-   src: String,
+   info: INFO,
    settings: SETTINGS,
    info_box: InfoBox,
    asci_box: AsciBox,
-   refreshing: bool,
-   reloading: bool,
 }
 
 impl App for LoopFetch {
    const APP_NAME: &'static str = "loopfetch";
-   const CONFIG_FILE: &'static str = "cfg.lua";
-   const DEFAULT_CONFIG_SRC: &'static str = include_str!("../../cfg_template.lua");
+   const CONFIG_FILE: &'static str = "init.lua";
+   const DEFAULT_CONFIG_SRC: &'static str = include_str!("../../init_template.lua");
 
-   fn init(gloop: &mut GLoop, src: String) -> AppOutput<Self> {
+   fn init(tui: TuiMut) -> AppOutput<Self> {
       let settings = SETTINGS::default();
       let mut app = Self {
-         info: Info::fetch(&settings),
-         lua: Lua::new(),
-         src: "".to_string(),
+         info: INFO::fetch(&settings),
          settings,
          info_box: InfoBox::default(),
          asci_box: AsciBox::default(),
-         refreshing: false,
-         reloading: false,
       };
-      app.reload(gloop, src);
-      gloop.set_fps(app.settings.fps);
-      gloop.set_tps(app.settings.tps);
+      tui.gloop.set_fps(app.settings.fps);
+      tui.gloop.set_tps(app.settings.tps);
       AppOutput::Ok(app)
    }
 
-   fn reload(&mut self, gloop: &mut GLoop, cfg_src: String) -> AppOutput<()> {
-      self.src = cfg_src;
-      self.load_lua();
-      gloop.set_fps(self.settings.fps);
-      gloop.set_tps(self.settings.tps);
-      AppOutput::nil()
-   }
-
-   fn logic(&mut self, gloop: &mut GLoop, gstate: &mut GState, event: Option<Event>) {
-      self.refreshing = if gloop.tick() % self.settings.rps == 0 {
+   fn logic(&mut self, mut tui: TuiMut, event: Option<Event>) {
+      if tui.gloop.tick() % self.settings.rps == 0 {
          self.info.refresh(&self.settings);
-         self.update(gloop);
-         true
-      } else {
-         false
       };
-      self.reloading = if gloop.tick() % (self.settings.rps * 10) == 0 {
-         gstate.request_reload();
-         true
-      } else {
-         false
-      };
-
+      if !tui.gstate.just_reloaded() {
+         self.update_cfg(&tui);
+      }
+      self.parse_cfg(&tui);
       match event {
-         Some(Event::Key(k)) => {
-            self.handle_key(gloop, gstate, k);
-         }
-         //Some(Event::Mouse(m)) => {
-         //   self.handle_mouse(gloop, gstate, m);
-         //}
+         Some(Event::Key(k)) => self.handle_key(&mut tui, k),
          _ => {}
       }
    }
 
-   fn render(&self, gloop: &GLoop, gstate: &GState, area: Rect, buf: &mut Buffer) {
+   fn render(&self, tui: Tui, buf: &mut Buffer) {
       let (a, b, a_w, b_w, a_h, b_h) = match self.settings.order {
          ORDER::InfoFirst => (
             0,
@@ -222,16 +192,16 @@ impl App for LoopFetch {
          [
             Constraint::Max(gap_w),
             Constraint::Fill(1),
-            Constraint::Max(gap_w),
+            Constraint::Max(gap_w + 1),
          ],
       )
       .split(lines[1]);
       let bot_box = lines[2];
 
-      self.render_blank_box(top_box, buf);
-      self.render_blank_box(bot_box, buf);
-      self.render_blank_box(mid_line[0], buf);
-      self.render_blank_box(mid_line[2], buf);
+      self.render_blank_box(&tui, 0, top_box, buf);
+      //self.render_blank_box(&tui, 1, bot_box, buf);
+      self.render_blank_box(&tui, 2, mid_line[0], buf);
+      //self.render_blank_box(&tui, 3, mid_line[2], buf);
 
       let content = Layout::new(
          dir,
@@ -242,19 +212,15 @@ impl App for LoopFetch {
       )
       .split(mid_line[1]);
 
-      self.render_info_box(gloop, gstate, area, content[a], buf);
-      self.render_asci_box(gloop, gstate, area, content[b], buf);
+      self.render_info_box(&tui, content[a], buf);
+      self.render_asci_box(&tui, content[b], buf);
    }
 }
 
 impl LoopFetch {
-   fn update(&mut self, gloop: &GLoop) {
-      self.update_lua(gloop);
-      self.run_lua();
-      self.parse_lua();
-   }
-   fn update_lua(&mut self, gloop: &GLoop) -> AppOutput<()> {
-      match self.lua.globals().get::<mlua::Table>("SETTINGS") {
+   fn update_cfg(&mut self, tui: &TuiMut) -> AppOutput<()> {
+      match tui.cfg.globals().get::<mlua::Table>("SETTINGS") {
+         Err(e) => return app_err!("failed to get SETTINGS in lua {e}"),
          Ok(table) => {
             let order = match table.get::<mlua::Table>("order") {
                Err(e) => return app_err!("failed to get SETTINGS.order in lua {e}"),
@@ -262,71 +228,55 @@ impl LoopFetch {
             };
             match self.settings.order {
                ORDER::InfoFirst => {
-                  order.set(1, "info");
-                  order.set(2, "ascii");
+                  let _ = order.set(1, "info");
+                  let _ = order.set(2, "ascii");
                }
                ORDER::AsciFirst => {
-                  order.set(1, "ascii");
-                  order.set(2, "info");
+                  let _ = order.set(1, "ascii");
+                  let _ = order.set(2, "info");
                }
             };
             match self.settings.layout {
                LAYOUT::Vert => {
-                  table.set("layout", "vertical");
+                  let _ = table.set("layout", "vertical");
                }
                LAYOUT::Horiz => {
-                  table.set("layout", "horizontal");
+                  let _ = table.set("layout", "horizontal");
                }
             }
          }
-         Err(e) => return app_err!("failed to get SETTINGS in lua {e}"),
       };
 
-      let info_lua = match self.info.to_lua(&self.lua) {
-         Ok(i) => i,
+      let info_lua = match self.info.to_lua(&tui.cfg) {
          Err(e) => return app_err!("failed to convert Info to lua {e}"),
-      };
-      let loop_lua = match gloop.to_lua(&self.lua) {
          Ok(i) => i,
+      };
+
+      let loop_lua = match tui.gloop.to_lua(&tui.cfg) {
          Err(e) => return app_err!("failed to convert Loop to lua {e}"),
+         Ok(i) => i,
       };
 
-      match self.lua.globals().set("Info", info_lua) {
-         Ok(_) => {}
+      match tui.cfg.globals().set("Info", info_lua) {
          Err(e) => return app_err!("failed to set Info in lua {}", e),
-      };
-      match self.lua.globals().set("Loop", loop_lua) {
          Ok(_) => {}
-         Err(e) => return app_err!("failed to set Loop in lua {}", e),
       };
 
+      match tui.cfg.globals().set("Loop", loop_lua) {
+         Err(e) => return app_err!("failed to set Loop in lua {}", e),
+         Ok(_) => {}
+      };
       AppOutput::nil()
    }
 
-   fn load_lua(&mut self) -> AppOutput<()> {
-      match self.lua.load(&self.src).exec() {
-         Err(e) => app_err!("failed to load lua {}", e),
-         _ => AppOutput::nil(),
-      }
-   }
-
-   fn run_lua(&mut self) -> AppOutput<()> {
-      match self.lua.globals().get::<mlua::Function>("update") {
-         Ok(f) => {
-            f.call::<()>(());
-            AppOutput::nil()
-         }
-         Err(e) => app_err!("failed to run lua {}", e),
-      }
-   }
-
-   fn parse_lua(&mut self) {
+   fn parse_cfg(&mut self, tui: &TuiMut) {
       let default_settings = SETTINGS::default();
       let default_layout = LAYOUT::default();
       let default_order = ORDER::default();
       let default_style = Style::new();
       let default_lines = LINES::new();
-      let globals = self.lua.globals();
+
+      let globals = tui.cfg.globals();
 
       let settings = match globals.get::<mlua::Table>("SETTINGS") {
          Ok(table) => {
@@ -350,7 +300,6 @@ impl LoopFetch {
                   match f.chars().nth(0).unwrap_or('i') {
                      'i' | 'I' => ORDER::InfoFirst,
                      'a' | 'A' => ORDER::AsciFirst,
-                     _ => default_order,
                      _ => default_order,
                   }
                }
@@ -440,14 +389,7 @@ impl LoopFetch {
       self.asci_box.lines = vec![Vec::<Word>::default(); 10];
    }
 
-   fn render_info_box(
-      &self,
-      _gloop: &GLoop,
-      _gstate: &GState,
-      _area: Rect,
-      layout: Rect,
-      buf: &mut Buffer,
-   ) {
+   fn render_info_box(&self, _tui: &Tui, layout: Rect, buf: &mut Buffer) {
       let mut text = Vec::<Line>::new();
       for line in &self.info_box.lines {
          let mut spans = Vec::<Span>::new();
@@ -465,14 +407,8 @@ impl LoopFetch {
          .render(layout, buf);
    }
 
-   fn render_asci_box(
-      &self,
-      gloop: &GLoop,
-      _gstate: &GState,
-      _area: Rect,
-      layout: Rect,
-      buf: &mut Buffer,
-   ) {
+   fn render_asci_box(&self, tui: &Tui, layout: Rect, buf: &mut Buffer) {
+      let gloop = tui.gloop;
       let fps_line = Line::from(format!(
          "fps: {:06.2} {} [{:06}/{:06} ms] ({:02})",
          gloop.fps(),
@@ -489,12 +425,15 @@ impl LoopFetch {
          gloop.budget(),
          gloop.tick() % gloop.target_tps(),
       ));
-      let refreshed = if self.refreshing { "refreshed..." } else { "" };
-      let reloaded = if self.reloading { "reloaded..." } else { "" };
+      let reloaded = if tui.gstate.is_reloading() {
+         "reloaded..."
+      } else {
+         ""
+      };
 
-      let rps_line = Line::from(format!("rps: {:02.2} {refreshed}", self.settings.rps));
+      let rps_line = Line::from(format!("rps: {:02.2} {reloaded}", self.settings.rps));
       let area_line = Line::from(format!(
-         "area: {} x {}  ({}) {reloaded}",
+         "area: {} x {}  ({})",
          layout.width, layout.height, self.info_box.max_len,
       ));
 
@@ -507,23 +446,25 @@ impl LoopFetch {
          .render(layout, buf);
    }
 
-   fn render_blank_box(&self, layout: Rect, buf: &mut Buffer) {
+   fn render_blank_box(&self, tui: &Tui, id: usize, layout: Rect, buf: &mut Buffer) {
       let block = Block::new();
       //.borders(Borders::ALL)
       //.border_type(BorderType::Rounded);
-      Paragraph::new("")
-         .block(block)
-         .style(Style::default().bg(Color::LightGreen))
-         .render(layout, buf);
+      let colors = [Color::Green, Color::Green, Color::Magenta, Color::Magenta];
+      let mut p = Paragraph::new("").block(block);
+      if tui.gstate.is_debug() {
+         p = p.style(Style::default().bg(colors[id]));
+      };
+      p.render(layout, buf);
    }
 
-   fn handle_key(&mut self, gloop: &mut GLoop, gstate: &mut GState, key_event: KeyEvent) {
-      //let fps = gloop.target_fps();
+   fn handle_key(&mut self, tui: &mut TuiMut, key_event: KeyEvent) {
       let kind = key_event.kind;
       if kind == KeyEventKind::Press {
          match key_event.code {
-            KeyCode::Char('q') => gstate.request_exit(),
-            KeyCode::Char('r') => gstate.request_reload(),
+            KeyCode::Char('q') => tui.gstate.request_exit(),
+            KeyCode::Char('d') => tui.gstate.toggle_debug(),
+            KeyCode::Char('r') => tui.gstate.request_reload(),
             KeyCode::Up | KeyCode::Down => self.settings.layout.swap(),
             KeyCode::Left | KeyCode::Right => self.settings.order.swap(),
             _ => {}

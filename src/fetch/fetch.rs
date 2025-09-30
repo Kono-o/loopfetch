@@ -3,8 +3,8 @@ use katatui::mlua;
 use katatui::mlua::prelude::{LuaResult, LuaTable};
 use katatui::*;
 use libmacchina::{
-   traits::{GeneralReadout as _, ProductReadout as _, ShellFormat, ShellKind},
-   GeneralReadout, ProductReadout,
+   traits::{GeneralReadout as _, ProductReadout as _, ShellFormat, ShellKind}, GeneralReadout,
+   ProductReadout,
 };
 use mpris::{Player, PlayerFinder};
 use nvml_wrapper::{
@@ -47,7 +47,7 @@ pub struct Media {
    pub paused: bool,
 }
 
-pub struct Info {
+pub struct INFO {
    pub gen_read: GeneralReadout,
    pub prod_read: ProductReadout,
    pub sys: System,
@@ -110,7 +110,7 @@ impl VecMedia for Vec<Media> {
    }
 }
 
-impl Info {
+impl INFO {
    pub fn fetch(settings: &SETTINGS) -> Self {
       let gen_read = GeneralReadout::new();
       let prod_read = ProductReadout::new();
@@ -279,7 +279,7 @@ fn get_os_kern() -> (String, String, String) {
 
 fn get_managers(gen_read: &GeneralReadout) -> (String, String, String, Option<String>) {
    let log_path = "/etc/systemd/system/display-manager.service";
-   let log_m = fs::read_link(log_path)
+   let log_m = fs::read_link(log_path.to_string())
       .ok()
       .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
       .map(|name| name.trim_end_matches(".service").to_string())
@@ -347,12 +347,12 @@ fn get_cpu_stats(gen_read: &GeneralReadout, sys: &System) -> (u8, f32, Mem) {
    let ram = Mem::from(sys.used_memory(), sys.total_memory());
 
    let hwmon = "/sys/class/hwmon/";
-   if let Ok(entries) = fs::read_dir(hwmon) {
+   if let Ok(entries) = fs::read_dir(hwmon.to_string()) {
       for entry in entries.flatten() {
          let path = entry.path();
-         if let Ok(name) = fs::read_to_string(path.join("name")) {
+         if let Ok(name) = fs::read_to_string(path.join("name".to_string())) {
             if name.contains("coretemp") || name.contains("k10temp") || name.contains("zenpower") {
-               if let Ok(val) = fs::read_to_string(path.join("temp1_input")) {
+               if let Ok(val) = fs::read_to_string(path.join("temp1_input".to_string())) {
                   if let Ok(milli_c) = val.trim().parse::<f32>() {
                      cpu_t = milli_c / 1000.0;
                      break;
