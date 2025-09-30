@@ -80,7 +80,7 @@ impl SETTINGS {
    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Word {
    pub text: String,
    pub style: Style,
@@ -168,44 +168,54 @@ impl App for LoopFetch {
    }
 
    fn render(&self, gloop: &GLoop, gstate: &GState, area: Rect, buf: &mut Buffer) {
-      let dir = match self.settings.layout {
-         LAYOUT::Horiz => Direction::Horizontal,
-         LAYOUT::Vert => Direction::Vertical,
+      let (dir, total_w, total_h) = match self.settings.layout {
+         LAYOUT::Vert => (
+            Direction::Vertical,
+            self.info_box.max_len.max(self.asci_box.max_len),
+            self.info_box.lines.len() + self.asci_box.lines.len(),
+         ),
+         LAYOUT::Horiz => (
+            Direction::Horizontal,
+            self.info_box.max_len + self.asci_box.max_len,
+            self.info_box.lines.len().max(self.asci_box.lines.len()),
+         ),
       };
-      let (a, b) = match self.settings.order {
-         ORDER::InfoFirst => (0, 1),
-         ORDER::AsciFirst => (1, 0),
+
+      let (a, b, a_w, b_w, a_h, b_h) = match self.settings.order {
+         ORDER::InfoFirst => (
+            1,
+            2,
+            self.info_box.max_len,
+            self.asci_box.max_len,
+            self.info_box.lines.len(),
+            self.asci_box.lines.len(),
+         ),
+         ORDER::AsciFirst => (
+            2,
+            1,
+            self.asci_box.max_len,
+            self.info_box.max_len,
+            self.asci_box.lines.len(),
+            self.info_box.lines.len(),
+         ),
       };
-      let constraint = |area: Rect, w: Constraint, h: Constraint| -> Rect {
-         let rect = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([w])
-            .split(area)[0];
-         let rect = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([h])
-            .split(rect)[0];
-         rect
-      };
-      let layout = Layout::default()
-         .direction(dir)
-         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-         .split(area);
 
-      let info_box = constraint(
-         layout[a],
-         Constraint::Length(self.info_box.max_len as u16),
-         Constraint::Length(self.info_box.lines.len() as u16),
-      );
+      let gap_left = (buf.area.width as usize).saturating_sub(total_w) as u16 / 2;
+      let gap_top = (buf.area.height as usize).saturating_sub(total_h) as u16 / 2;
 
-      let asci_box = constraint(
-         layout[b],
-         Constraint::Length(self.asci_box.max_len as u16 + 50),
-         Constraint::Length(self.asci_box.lines.len() as u16 + 10),
-      );
+      let window_layout = Layout::new(
+         Direction::Vertical,
+         [Constraint::Max(gap_top), Constraint::Min(0)],
+      )
+      .split(buf.area);
+      let gap_top_box = window_layout[0];
+      self.render_blank_box(gap_top_box, buf);
+      let gap_left_box =
+         Layout::new(Direction::Horizontal, [Constraint::Max(gap_left)]).split(window_layout[1]);
+      self.render_blank_box(gap_left_box[0], buf);
 
-      self.render_info_box(gloop, gstate, area, info_box, buf);
-      self.render_asci_box(gloop, gstate, area, asci_box, buf);
+      //self.render_info_box(gloop, gstate, area, info_layout[0], buf);
+      //self.render_asci_box(gloop, gstate, area, asci_layout[1], buf);
    }
 }
 
@@ -398,6 +408,8 @@ impl LoopFetch {
          .max()
          .unwrap_or(0);
       self.info_box.lines = lines;
+      self.asci_box.max_len = 30;
+      self.asci_box.lines = vec![Vec::<Word>::default(); 10];
    }
 
    fn render_info_box(
@@ -463,6 +475,13 @@ impl LoopFetch {
       Paragraph::new(Text::from(vec![fps_line, tps_line, rps_line, area_line]))
          .block(block)
          .render(layout, buf);
+   }
+
+   fn render_blank_box(&self, layout: Rect, buf: &mut Buffer) {
+      let block = Block::new()
+         .borders(Borders::ALL)
+         .border_type(BorderType::Rounded);
+      Paragraph::new("").block(block).render(layout, buf);
    }
 
    fn handle_key(&mut self, gloop: &mut GLoop, gstate: &mut GState, key_event: KeyEvent) {
