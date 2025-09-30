@@ -168,31 +168,18 @@ impl App for LoopFetch {
    }
 
    fn render(&self, gloop: &GLoop, gstate: &GState, area: Rect, buf: &mut Buffer) {
-      let (dir, total_w, total_h) = match self.settings.layout {
-         LAYOUT::Vert => (
-            Direction::Vertical,
-            self.info_box.max_len.max(self.asci_box.max_len),
-            self.info_box.lines.len() + self.asci_box.lines.len(),
-         ),
-         LAYOUT::Horiz => (
-            Direction::Horizontal,
-            self.info_box.max_len + self.asci_box.max_len,
-            self.info_box.lines.len().max(self.asci_box.lines.len()),
-         ),
-      };
-
       let (a, b, a_w, b_w, a_h, b_h) = match self.settings.order {
          ORDER::InfoFirst => (
+            0,
             1,
-            2,
             self.info_box.max_len,
             self.asci_box.max_len,
             self.info_box.lines.len(),
             self.asci_box.lines.len(),
          ),
          ORDER::AsciFirst => (
-            2,
             1,
+            0,
             self.asci_box.max_len,
             self.info_box.max_len,
             self.asci_box.lines.len(),
@@ -200,22 +187,63 @@ impl App for LoopFetch {
          ),
       };
 
-      let gap_left = (buf.area.width as usize).saturating_sub(total_w) as u16 / 2;
-      let gap_top = (buf.area.height as usize).saturating_sub(total_h) as u16 / 2;
+      let (dir, a_c, b_c, total_w, total_h) = match self.settings.layout {
+         LAYOUT::Vert => (
+            Direction::Vertical,
+            a_h,
+            b_h,
+            self.info_box.max_len.max(self.asci_box.max_len),
+            self.info_box.lines.len() + self.asci_box.lines.len(),
+         ),
+         LAYOUT::Horiz => (
+            Direction::Horizontal,
+            a_w,
+            b_w,
+            self.info_box.max_len + self.asci_box.max_len,
+            self.info_box.lines.len().max(self.asci_box.lines.len()),
+         ),
+      };
 
-      let window_layout = Layout::new(
+      let gap_w = (buf.area.width as usize).saturating_sub(total_w) as u16 / 2;
+      let gap_h = (buf.area.height as usize).saturating_sub(total_h) as u16 / 2;
+
+      let lines = Layout::new(
          Direction::Vertical,
-         [Constraint::Max(gap_top), Constraint::Min(0)],
+         [
+            Constraint::Max(gap_h),
+            Constraint::Min(0),
+            Constraint::Max(gap_h),
+         ],
       )
       .split(buf.area);
-      let gap_top_box = window_layout[0];
-      self.render_blank_box(gap_top_box, buf);
-      let gap_left_box =
-         Layout::new(Direction::Horizontal, [Constraint::Max(gap_left)]).split(window_layout[1]);
-      self.render_blank_box(gap_left_box[0], buf);
+      let top_box = lines[0];
+      let mid_line = Layout::new(
+         Direction::Horizontal,
+         [
+            Constraint::Max(gap_w),
+            Constraint::Fill(1),
+            Constraint::Max(gap_w),
+         ],
+      )
+      .split(lines[1]);
+      let bot_box = lines[2];
 
-      //self.render_info_box(gloop, gstate, area, info_layout[0], buf);
-      //self.render_asci_box(gloop, gstate, area, asci_layout[1], buf);
+      self.render_blank_box(top_box, buf);
+      self.render_blank_box(bot_box, buf);
+      self.render_blank_box(mid_line[0], buf);
+      self.render_blank_box(mid_line[2], buf);
+
+      let content = Layout::new(
+         dir,
+         [
+            Constraint::Length(a_c as u16),
+            Constraint::Length(b_c as u16),
+         ],
+      )
+      .split(mid_line[1]);
+
+      self.render_info_box(gloop, gstate, area, content[a], buf);
+      self.render_asci_box(gloop, gstate, area, content[b], buf);
    }
 }
 
@@ -428,11 +456,12 @@ impl LoopFetch {
          }
          text.push(Line::from(spans));
       }
-      let block = Block::new()
-         .borders(Borders::ALL)
-         .border_type(BorderType::Rounded);
+      let block = Block::new();
+      //.borders(Borders::ALL)
+      //.border_type(BorderType::Rounded);
       Paragraph::new(Text::from(text))
          .block(block)
+         .style(Style::default().bg(Color::LightRed))
          .render(layout, buf);
    }
 
@@ -469,19 +498,23 @@ impl LoopFetch {
          layout.width, layout.height, self.info_box.max_len,
       ));
 
-      let block = Block::new()
-         .borders(Borders::ALL)
-         .border_type(BorderType::Rounded);
+      let block = Block::new();
+      //.borders(Borders::ALL)
+      //.border_type(BorderType::Rounded);
       Paragraph::new(Text::from(vec![fps_line, tps_line, rps_line, area_line]))
          .block(block)
+         .style(Style::default().bg(Color::LightBlue))
          .render(layout, buf);
    }
 
    fn render_blank_box(&self, layout: Rect, buf: &mut Buffer) {
-      let block = Block::new()
-         .borders(Borders::ALL)
-         .border_type(BorderType::Rounded);
-      Paragraph::new("").block(block).render(layout, buf);
+      let block = Block::new();
+      //.borders(Borders::ALL)
+      //.border_type(BorderType::Rounded);
+      Paragraph::new("")
+         .block(block)
+         .style(Style::default().bg(Color::LightGreen))
+         .render(layout, buf);
    }
 
    fn handle_key(&mut self, gloop: &mut GLoop, gstate: &mut GState, key_event: KeyEvent) {
