@@ -63,9 +63,9 @@ pub struct SETTINGS {
 impl Default for SETTINGS {
    fn default() -> Self {
       Self {
-         fps: 60,
-         tps: 30,
-         rps: 5,
+         fps: 24,
+         tps: 12,
+         rps: 3,
          layout: LAYOUT::default(),
          order: ORDER::default(),
          vars: VARS::default(),
@@ -110,7 +110,7 @@ impl App for LoopFetch {
    const CONFIG_FILE: &'static str = "init.lua";
    const DEFAULT_CONFIG_SRC: &'static str = include_str!("../../init_template.lua");
 
-   fn init(tui: TuiMut) -> AppOutput<Self> {
+   fn init(mut tui: TUIMutRef) -> AppOutput<Self> {
       let settings = SETTINGS::default();
       let mut app = Self {
          info: INFO::fetch(&settings),
@@ -118,26 +118,27 @@ impl App for LoopFetch {
          info_box: InfoBox::default(),
          asci_box: AsciBox::default(),
       };
-      tui.gloop.set_fps(app.settings.fps);
-      tui.gloop.set_tps(app.settings.tps);
+      app.read_cfg(&tui);
+      app.update_tui_settings(&mut tui);
       AppOutput::Ok(app)
    }
 
-   fn logic(&mut self, mut tui: TuiMut, event: Option<Event>) {
+   fn logic(&mut self, mut tui: TUIMutRef, event: Option<Event>) {
       if tui.gloop.tick() % self.settings.rps == 0 {
          self.info.refresh(&self.settings);
       };
       if !tui.gstate.just_reloaded() {
-         self.update_cfg(&tui);
+         self.write_cfg(&tui);
       }
-      self.parse_cfg(&tui);
+      self.read_cfg(&tui);
+      self.update_tui_settings(&mut tui);
       match event {
          Some(Event::Key(k)) => self.handle_key(&mut tui, k),
          _ => {}
       }
    }
 
-   fn render(&self, tui: Tui, buf: &mut Buffer) {
+   fn render(&self, tui: TUIRef, buf: &mut Buffer) {
       let (a, b, a_w, b_w, a_h, b_h) = match self.settings.order {
          ORDER::InfoFirst => (
             0,
@@ -218,10 +219,14 @@ impl App for LoopFetch {
 }
 
 impl LoopFetch {
-   fn update_cfg(&mut self, tui: &TuiMut) -> AppOutput<()> {
+   fn write_cfg(&mut self, tui: &TUIMutRef) -> AppOutput<()> {
       match tui.cfg.globals().get::<mlua::Table>("SETTINGS") {
          Err(e) => return app_err!("failed to get SETTINGS in lua {e}"),
          Ok(table) => {
+            let _ = table.set("fps", self.settings.fps);
+            let _ = table.set("tps", self.settings.tps);
+            let _ = table.set("rps", self.settings.rps);
+
             let order = match table.get::<mlua::Table>("order") {
                Err(e) => return app_err!("failed to get SETTINGS.order in lua {e}"),
                Ok(t) => t,
@@ -269,7 +274,7 @@ impl LoopFetch {
       AppOutput::nil()
    }
 
-   fn parse_cfg(&mut self, tui: &TuiMut) {
+   fn read_cfg(&mut self, tui: &TUIMutRef) {
       let default_settings = SETTINGS::default();
       let default_layout = LAYOUT::default();
       let default_order = ORDER::default();
@@ -389,7 +394,12 @@ impl LoopFetch {
       self.asci_box.lines = vec![Vec::<Word>::default(); 10];
    }
 
-   fn render_info_box(&self, _tui: &Tui, layout: Rect, buf: &mut Buffer) {
+   fn update_tui_settings(&self, tui: &mut TUIMutRef) {
+      tui.gloop.set_fps(self.settings.fps);
+      tui.gloop.set_tps(self.settings.tps);
+   }
+
+   fn render_info_box(&self, _tui: &TUIRef, layout: Rect, buf: &mut Buffer) {
       let mut text = Vec::<Line>::new();
       for line in &self.info_box.lines {
          let mut spans = Vec::<Span>::new();
@@ -407,7 +417,7 @@ impl LoopFetch {
          .render(layout, buf);
    }
 
-   fn render_asci_box(&self, tui: &Tui, layout: Rect, buf: &mut Buffer) {
+   fn render_asci_box(&self, tui: &TUIRef, layout: Rect, buf: &mut Buffer) {
       let gloop = tui.gloop;
       let fps_line = Line::from(format!(
          "fps: {:06.2} {} [{:06}/{:06} ms] ({:02})",
@@ -446,7 +456,7 @@ impl LoopFetch {
          .render(layout, buf);
    }
 
-   fn render_blank_box(&self, tui: &Tui, id: usize, layout: Rect, buf: &mut Buffer) {
+   fn render_blank_box(&self, tui: &TUIRef, id: usize, layout: Rect, buf: &mut Buffer) {
       let block = Block::new();
       //.borders(Borders::ALL)
       //.border_type(BorderType::Rounded);
@@ -458,7 +468,7 @@ impl LoopFetch {
       p.render(layout, buf);
    }
 
-   fn handle_key(&mut self, tui: &mut TuiMut, key_event: KeyEvent) {
+   fn handle_key(&mut self, tui: &mut TUIMutRef, key_event: KeyEvent) {
       let kind = key_event.kind;
       if kind == KeyEventKind::Press {
          match key_event.code {

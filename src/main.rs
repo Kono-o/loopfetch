@@ -1,8 +1,9 @@
 mod app;
 mod fetch;
 
-use katatui::*;
+use app::LoopFetch;
+use katatui::TUI;
 
 fn main() {
-   entry::tui::<app::LoopFetch>();
+   TUI::<LoopFetch>::run();
 }
