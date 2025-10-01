@@ -43,7 +43,7 @@ STYLES = {
 	border = { fg = "#FFFFFF", bold = true },
 }
 
-function update()
+function tick()
 	-- helper functions
 	local function span(text, style_name)
 		return { text = text, style = STYLES[style_name] }
