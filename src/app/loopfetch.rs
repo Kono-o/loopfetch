@@ -85,6 +85,8 @@ pub struct Word {
    pub style: Style,
 }
 
+type LINES = Vec<Vec<Word>>;
+
 #[derive(Debug, Default)]
 pub struct InfoBox {
    lines: LINES,
@@ -96,8 +98,6 @@ pub struct AsciBox {
    max_len: usize,
 }
 
-type LINES = Vec<Vec<Word>>;
-
 pub struct LoopFetch {
    info: INFO,
    settings: SETTINGS,
@@ -108,7 +108,7 @@ pub struct LoopFetch {
 impl App for LoopFetch {
    const APP_NAME: &'static str = "loopfetch";
    const CONFIG_FILE: &'static str = "init.lua";
-   const DEFAULT_CONFIG_SRC: &'static str = include_str!("../../init_template.lua");
+   const DEFAULT_CONFIG_SRC: &'static str = include_str!("../../default.lua");
 
    fn init(mut tui: TUIMutRef) -> AppOutput<Self> {
       let settings = SETTINGS::default();
@@ -124,8 +124,9 @@ impl App for LoopFetch {
    }
 
    fn logic(&mut self, mut tui: TUIMutRef, event: Option<Event>) {
-      if tui.gloop.tick() % self.settings.rps == 0 {
+      if tui.runtime.tick() % self.settings.rps == 0 {
          self.info.refresh(&self.settings);
+         tui.gstate.msg.set_event_msg("refreshed fetch!")
       };
       if !tui.gstate.just_reloaded() {
          self.write_cfg(&tui);
@@ -187,22 +188,18 @@ impl App for LoopFetch {
          ],
       )
       .split(buf.area);
-      let top_box = lines[0];
       let mid_line = Layout::new(
          Direction::Horizontal,
          [
             Constraint::Max(gap_w),
-            Constraint::Fill(1),
+            Constraint::Min(0),
             Constraint::Max(gap_w + 1),
          ],
       )
       .split(lines[1]);
-      let bot_box = lines[2];
 
-      self.render_blank_box(&tui, 0, top_box, buf);
-      //self.render_blank_box(&tui, 1, bot_box, buf);
-      self.render_blank_box(&tui, 2, mid_line[0], buf);
-      //self.render_blank_box(&tui, 3, mid_line[2], buf);
+      self.render_blank_box(&tui, lines[0], buf);
+      self.render_blank_box(&tui, mid_line[0], buf);
 
       let content = Layout::new(
          dir,
@@ -257,7 +254,7 @@ impl LoopFetch {
          Ok(i) => i,
       };
 
-      let loop_lua = match tui.gloop.to_lua(&tui.cfg) {
+      let loop_lua = match tui.runtime.to_lua(&tui.cfg) {
          Err(e) => return app_err!("failed to convert Loop to lua {e}"),
          Ok(i) => i,
       };
@@ -395,8 +392,8 @@ impl LoopFetch {
    }
 
    fn update_tui_settings(&self, tui: &mut TUIMutRef) {
-      tui.gloop.set_fps(self.settings.fps);
-      tui.gloop.set_tps(self.settings.tps);
+      tui.runtime.set_fps(self.settings.fps);
+      tui.runtime.set_tps(self.settings.tps);
    }
 
    fn render_info_box(&self, _tui: &TUIRef, layout: Rect, buf: &mut Buffer) {
@@ -409,31 +406,28 @@ impl LoopFetch {
          text.push(Line::from(spans));
       }
       let block = Block::new();
-      //.borders(Borders::ALL)
-      //.border_type(BorderType::Rounded);
       Paragraph::new(Text::from(text))
          .block(block)
-         .style(Style::default().bg(Color::LightRed))
          .render(layout, buf);
    }
 
    fn render_asci_box(&self, tui: &TUIRef, layout: Rect, buf: &mut Buffer) {
-      let gloop = tui.gloop;
+      let runtime = tui.runtime;
       let fps_line = Line::from(format!(
          "fps: {:06.2} {} [{:06}/{:06} ms] ({:02})",
-         gloop.fps(),
-         gloop.target_fps(),
-         gloop.f_ms(),
-         gloop.budget(),
-         gloop.frame() % gloop.target_fps(),
+         runtime.fps(),
+         runtime.target_fps(),
+         runtime.f_ms(),
+         runtime.budget(),
+         runtime.frame() % runtime.target_fps(),
       ));
       let tps_line = Line::from(format!(
          "tps: {:06.2} {} [{:06}/{:06} ms] ({:02})",
-         gloop.tps(),
-         gloop.target_tps(),
-         gloop.t_ms(),
-         gloop.budget(),
-         gloop.tick() % gloop.target_tps(),
+         runtime.tps(),
+         runtime.target_tps(),
+         runtime.t_ms(),
+         runtime.budget(),
+         runtime.tick() % runtime.target_tps(),
       ));
       let reloaded = if tui.gstate.is_reloading() {
          "reloaded..."
@@ -448,23 +442,14 @@ impl LoopFetch {
       ));
 
       let block = Block::new();
-      //.borders(Borders::ALL)
-      //.border_type(BorderType::Rounded);
       Paragraph::new(Text::from(vec![fps_line, tps_line, rps_line, area_line]))
          .block(block)
-         .style(Style::default().bg(Color::LightBlue))
          .render(layout, buf);
    }
 
-   fn render_blank_box(&self, tui: &TUIRef, id: usize, layout: Rect, buf: &mut Buffer) {
+   fn render_blank_box(&self, tui: &TUIRef, layout: Rect, buf: &mut Buffer) {
       let block = Block::new();
-      //.borders(Borders::ALL)
-      //.border_type(BorderType::Rounded);
-      let colors = [Color::Green, Color::Green, Color::Magenta, Color::Magenta];
       let mut p = Paragraph::new("").block(block);
-      if tui.gstate.is_debug() {
-         p = p.style(Style::default().bg(colors[id]));
-      };
       p.render(layout, buf);
    }
 
