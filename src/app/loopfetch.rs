@@ -107,10 +107,10 @@ pub struct LoopFetch {
 
 impl App for LoopFetch {
    const APP_NAME: &'static str = "loopfetch";
-   const CONFIG_FILE: &'static str = "init.lua";
-   const DEFAULT_CONFIG_SRC: &'static str = include_str!("../../default.lua");
+   const CONFIG_FILE: Option<&'static str> = Some("init.lua");
+   const DEFAULT_CONFIG_SRC: &'static str = include_str!("../default.lua");
 
-   fn init(mut tui: TUIMutRef) -> AppOutput<Self> {
+   fn init(mut tui: TUIMutRef) -> Self {
       let settings = SETTINGS::default();
       let mut app = Self {
          info: INFO::fetch(&settings),
@@ -118,20 +118,20 @@ impl App for LoopFetch {
          info_box: InfoBox::default(),
          asci_box: AsciBox::default(),
       };
-      app.read_cfg(&tui);
+      app.read_cfg(&mut tui);
       app.update_tui_settings(&mut tui);
-      AppOutput::Ok(app)
+      app
    }
 
    fn logic(&mut self, mut tui: TUIMutRef, event: Option<Event>) {
       if tui.runtime.tick() % self.settings.rps == 0 {
          self.info.refresh(&self.settings);
-         tui.gstate.msg.set_event_msg("refreshed fetch!")
+         tui.debug.current_log.set_event_msg("refreshed fetch!")
       };
-      if !tui.gstate.just_reloaded() {
-         self.write_cfg(&tui);
+      if !tui.runtime.just_reloaded() {
+         self.write_cfg(&mut tui);
       }
-      self.read_cfg(&tui);
+      self.read_cfg(&mut tui);
       self.update_tui_settings(&mut tui);
       match event {
          Some(Event::Key(k)) => self.handle_key(&mut tui, k),
@@ -216,8 +216,13 @@ impl App for LoopFetch {
 }
 
 impl LoopFetch {
-   fn write_cfg(&mut self, tui: &TUIMutRef) -> AppOutput<()> {
-      match tui.cfg.globals().get::<mlua::Table>("SETTINGS") {
+   fn write_cfg(&mut self, tui: &mut TUIMutRef) -> AppOutput<()> {
+      let lua = match tui.cfg {
+         None => return AppOutput::void(),
+         Some(l) => l,
+      };
+
+      match lua.globals().get::<mlua::Table>("SETTINGS") {
          Err(e) => return app_err!("failed to get SETTINGS in lua {e}"),
          Ok(table) => {
             let _ = table.set("fps", self.settings.fps);
@@ -249,36 +254,41 @@ impl LoopFetch {
          }
       };
 
-      let info_lua = match self.info.to_lua(&tui.cfg) {
-         Err(e) => return app_err!("failed to convert Info to lua {e}"),
+      let info_lua = match self.info.to_lua(&lua) {
+         Err(e) => return app_err!("failed to convert FETCH to lua {e}"),
          Ok(i) => i,
       };
 
-      let loop_lua = match tui.runtime.to_lua(&tui.cfg) {
-         Err(e) => return app_err!("failed to convert Loop to lua {e}"),
+      let loop_lua = match tui.runtime.to_lua(&lua) {
+         Err(e) => return app_err!("failed to convert TUI to lua {e}"),
          Ok(i) => i,
       };
 
-      match tui.cfg.globals().set("Info", info_lua) {
-         Err(e) => return app_err!("failed to set Info in lua {}", e),
+      match lua.globals().set("FETCH", info_lua) {
+         Err(e) => return app_err!("failed to set FETCH in lua {}", e),
          Ok(_) => {}
       };
 
-      match tui.cfg.globals().set("Loop", loop_lua) {
-         Err(e) => return app_err!("failed to set Loop in lua {}", e),
+      match lua.globals().set("TUI", loop_lua) {
+         Err(e) => return app_err!("failed to set TUI in lua {}", e),
          Ok(_) => {}
       };
-      AppOutput::nil()
+      AppOutput::void()
    }
 
-   fn read_cfg(&mut self, tui: &TUIMutRef) {
+   fn read_cfg(&mut self, tui: &mut TUIMutRef) {
       let default_settings = SETTINGS::default();
       let default_layout = LAYOUT::default();
       let default_order = ORDER::default();
       let default_style = Style::new();
       let default_lines = LINES::new();
 
-      let globals = tui.cfg.globals();
+      let lua = match tui.cfg {
+         None => return,
+         Some(l) => l,
+      };
+
+      let globals = lua.globals();
 
       let settings = match globals.get::<mlua::Table>("SETTINGS") {
          Ok(table) => {
@@ -326,7 +336,7 @@ impl LoopFetch {
          _ => default_settings,
       };
 
-      let lines: Vec<Vec<Word>> = match globals.get::<mlua::Table>("INFO_LINES") {
+      let lines: Vec<Vec<Word>> = match globals.get::<mlua::Table>("FETCH_LINES") {
          Ok(lines_table) => {
             let mut result = Vec::new();
 
@@ -351,15 +361,11 @@ impl LoopFetch {
                   let mut style = default_style;
 
                   if let Ok(Some(fg_hex)) = style_tbl.get::<Option<String>>("fg") {
-                     if let Some((r, g, b)) = hex_to_rgb(&fg_hex) {
-                        style = style.fg(Color::Rgb(r, g, b));
-                     }
+                     style = style.fg(hex_to_rgb(&fg_hex));
                   }
 
                   if let Ok(Some(bg_hex)) = style_tbl.get::<Option<String>>("bg") {
-                     if let Some((r, g, b)) = hex_to_rgb(&bg_hex) {
-                        style = style.bg(Color::Rgb(r, g, b));
-                     }
+                     style = style.bg(hex_to_rgb(&bg_hex));
                   }
 
                   if let Ok(true) = style_tbl.get("bold") {
@@ -417,7 +423,7 @@ impl LoopFetch {
          "fps: {:06.2} {} [{:06}/{:06} ms] ({:02})",
          runtime.fps(),
          runtime.target_fps(),
-         runtime.f_ms(),
+         runtime.frame_ms(),
          runtime.budget(),
          runtime.frame() % runtime.target_fps(),
       ));
@@ -425,11 +431,11 @@ impl LoopFetch {
          "tps: {:06.2} {} [{:06}/{:06} ms] ({:02})",
          runtime.tps(),
          runtime.target_tps(),
-         runtime.t_ms(),
+         runtime.tick_ms(),
          runtime.budget(),
          runtime.tick() % runtime.target_tps(),
       ));
-      let reloaded = if tui.gstate.is_reloading() {
+      let reloaded = if tui.runtime.is_reloading() {
          "reloaded..."
       } else {
          ""
@@ -457,24 +463,13 @@ impl LoopFetch {
       let kind = key_event.kind;
       if kind == KeyEventKind::Press {
          match key_event.code {
-            KeyCode::Char('q') => tui.gstate.request_exit(),
-            KeyCode::Char('d') => tui.gstate.toggle_debug(),
-            KeyCode::Char('r') => tui.gstate.request_reload(),
+            KeyCode::Char('q') => tui.runtime.request_exit(),
+            KeyCode::Char('d') => tui.runtime.toggle_debug(),
+            KeyCode::Char('r') => tui.runtime.request_reload(),
             KeyCode::Up | KeyCode::Down => self.settings.layout.swap(),
             KeyCode::Left | KeyCode::Right => self.settings.order.swap(),
             _ => {}
          }
       }
    }
-}
-
-pub fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
-   let hex = hex.trim_start_matches('#');
-   if hex.len() != 6 {
-      return None;
-   }
-   let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
-   let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
-   let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
-   Some((r, g, b))
 }
